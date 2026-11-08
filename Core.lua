@@ -42,12 +42,13 @@ local function Help()
     Print("  /kindle lock | unlock - lock or unlock the button bar")
     Print("  /kindle show | hide - show or hide the button bar")
     Print("  /kindle reset - reset position and settings")
-    Print("  /kindle debug - print info to help find item/spell IDs")
+    Print("  /kindle debug - tools to find item/spell IDs and camp detection (/kindle debug for the list)")
 end
 
 SLASH_KINDLE1 = "/kindle"
 SlashCmdList.KINDLE = function(input)
-    local cmd = strlower(strtrim(input or ""))
+    local cmd, rest = strtrim(input or ""):match("^(%S*)%s*(.-)$")
+    cmd = strlower(cmd or "")
     local UI = Kindle.UI
     if cmd == "lock" or cmd == "unlock" then
         Kindle.db.locked = (cmd == "lock")
@@ -64,7 +65,7 @@ SlashCmdList.KINDLE = function(input)
         if UI and UI.ApplySettings then UI.ApplySettings() end
         Print("position and settings reset.")
     elseif cmd == "debug" then
-        Print("debug tools arrive in Step 2.")
+        Kindle.Debug.Run(rest)
     else
         Help()
     end

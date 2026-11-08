@@ -18,7 +18,10 @@ inside `AddOns\Kindle`.
 | `/kindle lock` / `/kindle unlock` | Lock or unlock the bar so it can be dragged |
 | `/kindle show` / `/kindle hide` | Show or hide the bar |
 | `/kindle reset` | Reset position and settings |
-| `/kindle debug` | Print info that helps find the right item and spell IDs |
+| `/kindle debug` | List the debug tools: `watch`, `auras`, `bags`, `skills`, `trade`, `pos`, `item`, `spell`, `clear` |
+
+Debug output is also saved to `WTF\Account\<ACCOUNT>\SavedVariables\Kindle.lua` (`debugLog`) when you
+`/reload` or log out.
 
 ## License
 

@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Kindle
+## Notes: Contextual action buttons for the Camping system.
+## Author: imsern
+## Version: 0.1.0
+## SavedVariables: KindleDB
+
+Data.lua
+Core.lua
+UI.lua

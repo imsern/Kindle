@@ -1,11 +1,24 @@
 ## Interface: 16001
 ## Title: Kindle
-## Notes: Contextual action buttons for the Camping system.
+## Notes: Contextual camping buttons, camp ratings for your class and bonus reminders.
 ## Author: imsern
-## Version: 0.1.0
+## Version: 0.1.0-beta
+## IconTexture: Interface\AddOns\Kindle\media\icon
+## X-Website: https://github.com/imsern/Kindle
+## X-License: MIT
 ## SavedVariables: KindleDB
+## OptionalDeps: EllesmereUI, NaowhUI_EUI, NaowhUI_Media
 
 Data.lua
 Core.lua
+Theme.lua
+Widgets.lua
+Detect.lua
+Advice.lua
+Alerts.lua
+Share.lua
+Recipes.lua
 Debug.lua
 UI.lua
+Settings.lua
+Welcome.lua

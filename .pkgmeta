@@ -1,0 +1,15 @@
+# CurseForge packager: builds the addon zip from a tag once the project is linked.
+package-as: Kindle
+
+enable-nolib-creation: no
+
+ignore:
+  - .gitattributes
+  - .gitignore
+  - media/logo.svg
+  - media/logo.png
+  - CHANGELOG.md
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown

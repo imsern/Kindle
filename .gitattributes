@@ -1,0 +1,11 @@
+# Left out of the release zip (git archive). Keep in step with .pkgmeta's ignore list.
+.gitattributes export-ignore
+.gitignore export-ignore
+.pkgmeta export-ignore
+media/logo.svg export-ignore
+media/logo.png export-ignore
+CHANGELOG.md export-ignore
+
+# Binary assets
+*.tga binary
+*.png binary

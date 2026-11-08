@@ -35,86 +35,25 @@ local function Out(msg)
 end
 
 ---------------------------------------------------------------------------
--- Client compatibility (Forever may have either the old globals or the C_ namespaces)
+-- Helpers. Forever runs the modern API (C_Spell, C_Item, C_Container, C_UnitAuras); the old globals are gone.
 ---------------------------------------------------------------------------
 
-local GetNumSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
-local GetBagItemLink = (C_Container and C_Container.GetContainerItemLink) or GetContainerItemLink
+local IsSecret, AurasHidden = Kindle.IsSecret, Kindle.AurasHidden
 
-local function GetBagItemCount(bag, slot)
-    if C_Container and C_Container.GetContainerItemInfo then
-        local info = C_Container.GetContainerItemInfo(bag, slot)
-        return info and info.stackCount or 0
-    end
-    local _, count = GetContainerItemInfo(bag, slot)
-    return count or 0
-end
-
--- Forever runs the modern API: the GetSpellInfo and GetItemInfo globals are gone (ForeverBugs, 2026-11-08),
--- so prefer the C_Spell / C_Item versions and fall back to the globals only where they exist.
-local function SpellName(id)
-    if C_Spell and C_Spell.GetSpellName then return C_Spell.GetSpellName(id) end
-    if GetSpellInfo then return (GetSpellInfo(id)) end
-end
-
-local function ItemName(id)
-    if C_Item and C_Item.GetItemNameByID then return C_Item.GetItemNameByID(id) end
-    if C_Item and C_Item.GetItemInfo then return (C_Item.GetItemInfo(id)) end
-    if GetItemInfo then return (GetItemInfo(id)) end
-end
-
-local GetItemInfoAny = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-local GetItemSpellAny = (C_Item and C_Item.GetItemSpell) or GetItemSpell
-local GetItemCountAny = (C_Item and C_Item.GetItemCount) or GetItemCount
-local IsUsableItemAny = (C_Item and C_Item.IsUsableItem) or IsUsableItem
-
--- Returns name, spellID for a spell ID or name.
-local function SpellInfo(idOrName)
-    if C_Spell and C_Spell.GetSpellInfo then
-        local info = C_Spell.GetSpellInfo(idOrName)
-        if info then return info.name, info.spellID end
-        return nil
-    end
-    if GetSpellInfo then
-        local name, _, _, _, _, _, spellID = GetSpellInfo(idOrName)
-        return name, spellID
-    end
-end
-
-local function SpellUsable(idOrName)
-    if C_Spell and C_Spell.IsSpellUsable then return C_Spell.IsSpellUsable(idOrName) end
-    if IsUsableSpell then return IsUsableSpell(idOrName) end
-end
-
--- In combat Forever hides the player's auras from addons ("secret" values); reading them then errors.
-local function IsSecret(v)
-    return issecretvalue ~= nil and issecretvalue(v) and true or false
-end
-
-local function AurasHidden()
-    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() and true or false
-end
+local function SpellName(id) return C_Spell.GetSpellName(id) end
+local function ItemName(id) return C_Item.GetItemNameByID(id) end
+local function ItemCount(id) return C_Item.GetItemCount(id) or 0 end
 
 local function ItemIDFromLink(link)
     return link and tonumber(link:match("item:(%d+)"))
 end
 
-local function SpellIDFromLink(link)
-    return link and tonumber(link:match("enchant:(%d+)") or link:match("spell:(%d+)"))
-end
-
--- Calls fn(name, spellID, duration, expirationTime, sourceUnit) for each aura on unit.
-local function ForEachAura(unit, filter, fn)
+-- Calls fn(aura) for each of the player's auras with this filter. All auras, not just Kindle's camp cache.
+local function ForEachAura(filter, fn)
     for i = 1, 40 do
-        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local a = C_UnitAuras.GetAuraDataByIndex(unit, i, filter)
-            if not a then return end
-            fn(a.name, a.spellId, a.duration, a.expirationTime, a.sourceUnit)
-        else
-            local name, _, _, _, duration, expires, source, _, _, spellID = UnitAura(unit, i, filter)
-            if not name then return end
-            fn(name, spellID, duration, expires, source)
-        end
+        local a = C_UnitAuras.GetAuraDataByIndex("player", i, filter)
+        if not a then return end
+        fn(a)
     end
 end
 
@@ -144,10 +83,10 @@ end
 local function AuraSnapshot()
     local snap = {}
     for _, filter in ipairs({ "HELPFUL", "HARMFUL" }) do
-        ForEachAura("player", filter, function(name, spellID, duration, _, source)
-            snap[spellID or name] = format("%s (spell %s, %s, %ss, from %s)",
-                name, tostring(spellID), filter == "HELPFUL" and "buff" or "debuff",
-                tostring(duration or 0), tostring(source or "?"))
+        ForEachAura(filter, function(a)
+            snap[a.spellId or a.name] = format("%s (spell %s, %s, %ss, from %s)",
+                tostring(a.name), tostring(a.spellId), filter == "HELPFUL" and "buff" or "debuff",
+                tostring(a.duration or 0), tostring(a.sourceUnit or "?"))
         end)
     end
     return snap
@@ -156,10 +95,10 @@ end
 local function BagSnapshot()
     local snap = {}
     for bag = 0, 4 do
-        for slot = 1, (GetNumSlots(bag) or 0) do
-            local id = ItemIDFromLink(GetBagItemLink(bag, slot))
-            if id then
-                snap[id] = (snap[id] or 0) + GetBagItemCount(bag, slot)
+        for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID then
+                snap[info.itemID] = (snap[info.itemID] or 0) + (info.stackCount or 0)
             end
         end
     end
@@ -197,12 +136,11 @@ local function WatchMessage(text)
     Out(text .. "  @ " .. PosString())
 end
 
+-- UNIT_AURA and UNIT_SPELLCAST_SUCCEEDED are registered for the player only, in ToggleWatch.
 local WATCH_EVENTS = {
-    "UNIT_AURA",
     "ZONE_CHANGED",
     "ZONE_CHANGED_INDOORS",
     "ZONE_CHANGED_NEW_AREA",
-    "UNIT_SPELLCAST_SUCCEEDED",
     "BAG_UPDATE_DELAYED",
     "UI_ERROR_MESSAGE",
     "UI_INFO_MESSAGE",
@@ -248,27 +186,18 @@ watcher:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -- World objects (campfires, profession objects) have no unit, so their name only shows up in the tooltip.
+-- Hooked the first time watch is turned on; it does nothing while watch is off.
 local tooltipHooked = false
 local function HookTooltip()
     if tooltipHooked then return end
     tooltipHooked = true
     GameTooltip:HookScript("OnShow", function(tt)
-        if not watching or tt:GetUnit() then return end
-        local owner = tt:GetOwner()
-        if owner ~= UIParent and owner ~= WorldFrame then return end
-        -- Only tooltips for things in the 3D world, not minimap buttons or minimap quest blips.
-        local focus
-        if GetMouseFoci then
-            focus = GetMouseFoci()[1]
-        elseif GetMouseFocus then
-            focus = GetMouseFocus()
-        end
-        if focus and focus ~= WorldFrame then return end
-        local line1 = GameTooltipTextLeft1 and GameTooltipTextLeft1:GetText()
-        -- Multi-line first lines are quest objective lists, not object names.
-        if not line1 or line1:find("\n", 1, true) or seenTooltips[line1] then return end
+        if not watching then return end
+        local line1 = Kindle.WorldObjectName(tt)
+        if not line1 or seenTooltips[line1] then return end
         seenTooltips[line1] = true
         local line2 = GameTooltipTextLeft2 and GameTooltipTextLeft2:GetText()
+        if line2 and IsSecret(line2) then line2 = nil end
         Out(format("object tooltip \"%s\"%s  @ %s", line1, line2 and (" / \"" .. line2 .. "\"") or "", PosString()))
     end)
 end
@@ -279,6 +208,9 @@ local function ToggleWatch()
         lastAuras = AurasHidden() and {} or AuraSnapshot()
         lastBags, seenTooltips = BagSnapshot(), {}
         for _, e in ipairs(WATCH_EVENTS) do watcher:RegisterEvent(e) end
+        -- Only the player's auras and casts, not every nameplate's.
+        watcher:RegisterUnitEvent("UNIT_AURA", "player")
+        watcher:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
         HookTooltip()
         Out("watch ON. Walk up to a campsite, place a fire, mouse over objects, sit down. "
             .. "Type /kindle debug watch again to stop.")
@@ -311,94 +243,57 @@ local function DumpBags(filter)
     for id, count in pairs(BagSnapshot()) do
         local name = ItemName(id) or "?"
         if not filter or strlower(name):find(filter, 1, true) then
-            local _, spellID = GetItemSpellAny(id)
+            local _, spellID = C_Item.GetItemSpell(id)
             Out(format("  %s x%d (item %d%s)", name, count, id, spellID and (", use spell " .. spellID) or ""))
         end
     end
 end
 
-local function DumpSkills()
-    if not (GetNumSkillLines and GetSkillLineInfo) then
-        return Out("GetNumSkillLines/GetSkillLineInfo don't exist on this client.")
-    end
-    Out("skills:")
-    for i = 1, GetNumSkillLines() do
-        local name, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
-        if isHeader then
-            Out("  [" .. tostring(name) .. "]")
-        else
-            Out(format("    %s %d/%d", tostring(name), rank or 0, maxRank or 0))
-        end
-    end
-end
-
-local function DumpRecipe(name, itemLink, recipeLink, numReagents, getReagent, getReagentLink)
-    Out(format("  %s -> item %s, spell %s",
-        name, tostring(ItemIDFromLink(itemLink)), tostring(SpellIDFromLink(recipeLink) or SpellIDFromLink(itemLink))))
-    for r = 1, numReagents do
-        local rName, _, need, have = getReagent(r)
-        Out(format("      %dx %s (item %s, have %d)", need or 0, tostring(rName),
-            tostring(ItemIDFromLink(getReagentLink(r))), have or 0))
-    end
-end
-
+-- Forever uses the retail profession window: C_TradeSkillUI answers for the profession that is open.
 local function DumpTrade(filter)
+    local T = C_TradeSkillUI
+    if not (T and T.GetAllRecipeIDs) then return Out("C_TradeSkillUI.GetAllRecipeIDs doesn't exist on this client.") end
+    local ok, ids = pcall(T.GetAllRecipeIDs)
+    if not ok or type(ids) ~= "table" or #ids == 0 then
+        return Out("open a profession window first, then run /kindle debug trade [filter].")
+    end
     filter = filter ~= "" and strlower(filter) or nil
-    local found = false
-
-    if GetNumTradeSkills and (TradeSkillFrame and TradeSkillFrame:IsShown()) then
-        found = true
-        Out("trade skill: " .. tostring(GetTradeSkillLine()))
-        for i = 1, GetNumTradeSkills() do
-            local name, kind = GetTradeSkillInfo(i)
-            if name and kind ~= "header" and (not filter or strlower(name):find(filter, 1, true)) then
-                DumpRecipe(name, GetTradeSkillItemLink(i), GetTradeSkillRecipeLink and GetTradeSkillRecipeLink(i),
-                    GetTradeSkillNumReagents(i),
-                    function(r) return GetTradeSkillReagentInfo(i, r) end,
-                    function(r) return GetTradeSkillReagentItemLink(i, r) end)
+    local R = Kindle.Recipes
+    Out(format("profession %s: %d recipes", tostring(R.ProfessionName()), #ids))
+    for _, recipeID in ipairs(ids) do
+        local info = T.GetRecipeInfo and T.GetRecipeInfo(recipeID)
+        local name = (info and info.name) or SpellName(recipeID) or "?"
+        if not filter or strlower(name):find(filter, 1, true) then
+            local itemID = R.OutputItem(recipeID)
+            Out(format("  %s (recipe %d) -> item %s%s, learned %s", name, recipeID, tostring(itemID),
+                (itemID and R.byItem[itemID]) and " [camp]" or "", tostring(info and info.learned)))
+            for _, r in ipairs(R.Reagents(recipeID)) do
+                Out(format("      %dx %s (item %d, have %d)", r.need, ItemName(r.itemID) or "?", r.itemID,
+                    ItemCount(r.itemID)))
             end
         end
-    end
-
-    -- Enchanting (and pet training) use the separate Craft API in Classic.
-    if GetNumCrafts and (CraftFrame and CraftFrame:IsShown()) then
-        found = true
-        Out("craft: " .. tostring(GetCraftDisplaySkillLine and GetCraftDisplaySkillLine() or "?"))
-        for i = 1, GetNumCrafts() do
-            local name, _, kind = GetCraftInfo(i)
-            if name and kind ~= "header" and (not filter or strlower(name):find(filter, 1, true)) then
-                DumpRecipe(name, GetCraftItemLink(i), GetCraftRecipeLink and GetCraftRecipeLink(i),
-                    GetCraftNumReagents(i),
-                    function(r) return GetCraftReagentInfo(i, r) end,
-                    function(r) return GetCraftReagentItemLink(i, r) end)
-            end
-        end
-    end
-
-    if not found then
-        Out("open a profession window first, then run /kindle debug trade [filter].")
     end
 end
 
 local function DumpItem(arg)
     local id = ItemIDFromLink(arg) or tonumber(arg)
     if not id then return Out("usage: /kindle debug item <itemID or shift-clicked link>") end
-    local name, link, _, _, reqLevel, itemType, subType = GetItemInfoAny(id)
+    local name, link, _, _, reqLevel, itemType, subType = C_Item.GetItemInfo(id)
     if not name then return Out("item " .. id .. " not cached yet, try again in a moment.") end
-    local spellName, spellID = GetItemSpellAny(id)
+    local spellName, spellID = C_Item.GetItemSpell(id)
     Out(format("item %d: %s  type %s/%s  req level %s  in bags %d  usable %s",
         id, link or name, tostring(itemType), tostring(subType), tostring(reqLevel),
-        GetItemCountAny(id) or 0, tostring(IsUsableItemAny(id) and true or false)))
+        ItemCount(id), tostring(C_Item.IsUsableItem(id) and true or false)))
     Out(format("  use spell: %s (spell %s)", tostring(spellName), tostring(spellID)))
 end
 
 local function DumpSpell(arg)
     if arg == "" then return Out("usage: /kindle debug spell <spellID or name>") end
-    local name, spellID = SpellInfo(tonumber(arg) or arg)
-    if not name then return Out("no spell found for \"" .. arg .. "\".") end
-    local usable, noMana = SpellUsable(spellID or name)
-    Out(format("spell %s: %s  known %s  usable %s%s", tostring(spellID), name,
-        tostring(spellID and IsSpellKnown and IsSpellKnown(spellID) or false),
+    local info = C_Spell.GetSpellInfo(tonumber(arg) or arg)
+    if not info then return Out("no spell found for \"" .. arg .. "\".") end
+    local usable, noMana = C_Spell.IsSpellUsable(info.spellID)
+    Out(format("spell %d: %s  known %s  usable %s%s", info.spellID, info.name,
+        tostring(IsPlayerSpell(info.spellID) and true or false),
         tostring(usable and true or false), noMana and " (no mana)" or ""))
 end
 
@@ -406,10 +301,14 @@ end
 local function CheckEntry(prefix, e)
     local name = ItemName(e.item)
     local mark = (name == e.name) and "ok" or ("|cffff4040client says \"" .. tostring(name) .. "\"|r")
-    local line = format("%s%s (item %d) %s, have %d", prefix, e.name, e.item, mark, GetItemCountAny(e.item) or 0)
+    local line = format("%s%s (item %d) %s, have %d", prefix, e.name, e.item, mark, ItemCount(e.item))
     if e.craft then
-        local known = IsPlayerSpell and IsPlayerSpell(e.craft)
+        local known = IsPlayerSpell(e.craft)
         line = line .. format(", craft %s (spell %d) known %s", tostring(SpellName(e.craft)), e.craft, tostring(known and true or false))
+    end
+    local saved = Kindle.db.recipes and Kindle.db.recipes[e.item]
+    if saved then
+        line = line .. format(" |cff00ff00[learned from %s]|r", tostring(saved.profession))
     end
     Out(line)
 end
@@ -424,8 +323,84 @@ local function DumpData()
         Out(format("%s (bonus %s \"%s\"):", prof, tostring(p.bonus), tostring(p.bonus and SpellName(p.bonus))))
         for i, e in ipairs(p.tiers) do CheckEntry(format("  T%d ", i), e) end
     end
-    for _, e in ipairs(D.other) do CheckEntry("other: ", e) end
     Out("names showing \"nil\" aren't cached yet: run it again in a moment.")
+end
+
+-- Camp aura tooltips: what the game tells about the camp you're at and the bonuses you have. This is what a
+-- class-based "is this camp better for me?" check would have to read.
+local function TooltipLines(data)
+    local out = {}
+    if type(data) ~= "table" or type(data.lines) ~= "table" then return out end
+    for _, l in ipairs(data.lines) do
+        local left, right = l.leftText, l.rightText
+        if left and not IsSecret(left) and left ~= "" then
+            if right and not IsSecret(right) and right ~= "" then left = left .. "  |  " .. right end
+            out[#out + 1] = left
+        end
+    end
+    return out
+end
+
+local function CampSpellIDs()
+    local set = {}
+    local D = Kindle.Data
+    for name, id in pairs(D.auras) do set[id] = name end
+    for line, p in pairs(D.professions) do
+        if p.bonus then set[p.bonus] = line .. " bonus" end
+        for _, e in ipairs(p.tiers) do
+            if e.bonus then set[e.bonus] = e.name .. " bonus" end
+        end
+    end
+    return set
+end
+
+local CAMP_WORDS = { "camp", "boost", "extra", "rest", "welcom", "attuned" }
+
+local function DumpTips(arg)
+    if not C_TooltipInfo then return Out("C_TooltipInfo doesn't exist on this client.") end
+    local known = CampSpellIDs()
+
+    if arg == "all" then
+        -- Every bonus in Data.lua, as its spell tooltip: the description and amounts, without needing the aura.
+        for id, label in pairs(known) do
+            local ok, data = pcall(C_TooltipInfo.GetSpellByID, id)
+            Out(format("spell %d (%s):", id, label))
+            for _, l in ipairs(ok and TooltipLines(data) or {}) do Out("    " .. l) end
+        end
+        return
+    end
+
+    if AurasHidden() then return Out("auras are hidden from addons right now (combat). Try again after combat.") end
+    local found = 0
+    for _, filter in ipairs({ "HELPFUL", "HARMFUL" }) do
+        for i = 1, 40 do
+            local a = C_UnitAuras.GetAuraDataByIndex("player", i, filter)
+            if not a then break end
+            local match = known[a.spellId]
+            if not match then
+                local lower = strlower(a.name or "")
+                for _, word in ipairs(CAMP_WORDS) do
+                    if lower:find(word, 1, true) then match = "name match"; break end
+                end
+            end
+            if match then
+                found = found + 1
+                Out(format("%s (spell %s, %s, %s) @ %s", tostring(a.name), tostring(a.spellId),
+                    filter == "HELPFUL" and "buff" or "debuff", match, PosString()))
+                local get = filter == "HELPFUL" and C_TooltipInfo.GetUnitBuffByAuraInstanceID
+                    or C_TooltipInfo.GetUnitDebuffByAuraInstanceID
+                local ok, data = pcall(get, "player", a.auraInstanceID)
+                for _, l in ipairs(ok and TooltipLines(data) or {}) do Out("    " .. l) end
+                -- The numbers the aura carries (NaowhForever_Combat reads bonus amounts from these).
+                if type(a.points) == "table" and #a.points > 0 then
+                    local p = {}
+                    for k, v in ipairs(a.points) do p[k] = IsSecret(v) and "?" or tostring(v) end
+                    Out("    points: " .. table.concat(p, ", "))
+                end
+            end
+        end
+    end
+    if found == 0 then Out("no camp auras on you right now.") end
 end
 
 ---------------------------------------------------------------------------
@@ -437,12 +412,13 @@ local function Help()
     Kindle.Print("  watch - toggle logging of auras, zone changes, casts, bag changes, messages and object tooltips")
     Kindle.Print("  auras - list your current buffs and debuffs with spell IDs")
     Kindle.Print("  bags [filter] - list bag items with item IDs")
-    Kindle.Print("  skills - list your skills and ranks")
     Kindle.Print("  trade [filter] - list recipes in the open profession window with IDs and reagents")
     Kindle.Print("  pos - show map, coordinates and zone texts")
     Kindle.Print("  item <id|link> - item details and the spell it uses")
     Kindle.Print("  spell <id|name> - spell details")
     Kindle.Print("  data - check every ID in Data.lua against the client")
+    Kindle.Print("  tips - tooltip text of the camp auras on you; tips all - every camp bonus's spell tooltip")
+    Kindle.Print("  advice - your role, what Kindle knows about this camp and your bonuses, with scores")
     Kindle.Print("  clear - empty the saved debug log")
 end
 
@@ -452,12 +428,14 @@ function Debug.Run(input)
     if cmd == "watch" then ToggleWatch()
     elseif cmd == "auras" then DumpAuras()
     elseif cmd == "bags" then DumpBags(rest)
-    elseif cmd == "skills" then DumpSkills()
     elseif cmd == "trade" then DumpTrade(rest)
     elseif cmd == "pos" then Out(PosString())
     elseif cmd == "item" then DumpItem(rest)
     elseif cmd == "spell" then DumpSpell(rest)
     elseif cmd == "data" then DumpData()
+    elseif cmd == "tips" then DumpTips(strlower(rest))
+    elseif cmd == "advice" then
+        for _, l in ipairs(Kindle.Advice.Report()) do Out(l) end
     elseif cmd == "clear" then
         Kindle.db.debugLog = {}
         Kindle.Print("debug log cleared.")

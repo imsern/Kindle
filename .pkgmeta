@@ -4,6 +4,7 @@ package-as: Kindle
 enable-nolib-creation: no
 
 ignore:
+  - .github
   - .gitattributes
   - .gitignore
   - media/logo.svg

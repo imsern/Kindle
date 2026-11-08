@@ -1,0 +1,31 @@
+# Packages the addon and uploads it to CurseForge (project 1791359, from Kindle.toc) whenever a version tag
+# (v...) is pushed, including one created by publishing a GitHub release. Can also be started by hand from the
+# Actions tab: an untagged run uploads an alpha build.
+#
+# Needs one repository secret: CF_API_KEY, a CurseForge API token
+# (Settings > Secrets and variables > Actions > New repository secret).
+#
+# Tags with "alpha" or "beta" in them become alpha/beta files on CurseForge; others become releases.
+# GitHub releases stay manual: this only uploads to CurseForge.
+
+name: Package and upload to CurseForge
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the packager reads the tag history for the version and changelog
+
+      - name: Package and upload
+        uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}

@@ -6,6 +6,7 @@
 ## IconTexture: Interface\AddOns\Kindle\media\icon
 ## X-Website: https://github.com/imsern/Kindle
 ## X-License: MIT
+## X-Curse-Project-ID: 1791359
 ## SavedVariables: KindleDB
 ## OptionalDeps: EllesmereUI, NaowhUI_EUI, NaowhUI_Media
 
